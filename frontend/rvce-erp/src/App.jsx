@@ -12,7 +12,12 @@ function App() {
   const [view, setView] = useState("master");
   const [user, setUser] = useState(null);
 
-  // Decide default screen after login
+  useEffect(() => {
+    // auto login if token exists
+    const token = localStorage.getItem("token");
+    if (!token) return;
+  }, []);
+
   useEffect(() => {
     if (!user) return;
 
@@ -21,37 +26,46 @@ function App() {
     else if (user.role === "Student") setView("section");
   }, [user]);
 
-  // Protect unauthorized view access
   const getAllowedComponent = () => {
     if (!user) return <Login onLogin={setUser} />;
 
     if (user.role === "Admin") {
       switch (view) {
-        case "dashboard": return <DashboardView />;
-        case "master": return <TimetableView />;
-        case "teacher": return <TeacherView />;
-        case "section": return <SectionView />;
-        case "room": return <RoomView />;
-        case "upload": return <UploadView />;
-        default: return <DashboardView />;
+        case "dashboard":
+          return <DashboardView />;
+        case "master":
+          return <TimetableView />;
+        case "teacher":
+          return <TeacherView />;
+        case "section":
+          return <SectionView />;
+        case "room":
+          return <RoomView />;
+        case "upload":
+          return <UploadView />;
+        default:
+          return <DashboardView />;
       }
     }
 
-    if (user.role === "Teacher") {
-      return <TeacherView user={user} />;
-    }
+    if (user.role === "Teacher") return <TeacherView user={user} />;
+    if (user.role === "Student") return <SectionView user={user} />;
 
-    if (user.role === "Student") {
-      return <SectionView user={user} />;
-    }
+    return <Login onLogin={setUser} />;
   };
 
   return (
     <>
-      {user && <Navbar setView={setView} user={user} onLogout={() => {
-  localStorage.removeItem("token");
-  setUser(null);
-}} />}
+      {user && (
+        <Navbar
+          setView={setView}
+          user={user}
+          onLogout={() => {
+            localStorage.removeItem("token");
+            setUser(null);
+          }}
+        />
+      )}
       {getAllowedComponent()}
     </>
   );
