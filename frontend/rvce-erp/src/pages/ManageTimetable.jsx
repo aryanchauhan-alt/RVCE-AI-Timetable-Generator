@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import AppShell from '@/components/layout/AppShell';
 
-const API_BASE = 'http://localhost:8000/api/timetable';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'https://rvce-ai-timetable-generator.onrender.com') + '/api/timetable';
 
 const TIME_SLOTS = [
   { id: 1, label: '9-10' },

@@ -14,7 +14,7 @@ import RVCETimetableGrid from '../components/RVCETimetableGrid';
 import RVCEUniversalGrid from '../components/RVCEUniversalGrid';
 import ManualAdjustment from '../components/ManualAdjustment';
 
-const API_BASE = 'http://localhost:8000/api/timetable';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'https://rvce-ai-timetable-generator.onrender.com') + '/api/timetable';
 
 // Time slots configuration (V7)
 const TIME_SLOTS = {

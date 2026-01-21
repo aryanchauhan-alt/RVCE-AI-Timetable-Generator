@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 
-const API_BASE = 'http://localhost:8000/api/timetable';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'https://rvce-ai-timetable-generator.onrender.com') + '/api/timetable';
 const LOCAL_STORAGE_KEY = 'rvce_timetable_changes';
 
 const TIME_SLOTS = [

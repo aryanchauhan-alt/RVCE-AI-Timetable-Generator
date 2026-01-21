@@ -134,7 +134,7 @@ const UploadData = () => {
   const handleClearTimetable = async () => {
     setClearing(true);
     try {
-      const res = await fetch('http://localhost:8000/api/timetable/clear', { method: 'POST' });
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'https://rvce-ai-timetable-generator.onrender.com'}/api/timetable/clear`, { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         setClearMessage({ type: 'success', text: 'Timetable cleared successfully!' });

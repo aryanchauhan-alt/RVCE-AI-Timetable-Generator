@@ -41,7 +41,7 @@ const TIME_SLOTS = [
     { id: 6, label: '3:30 - 4:30' },
 ];
 
-const API_BASE = 'http://localhost:8000/api/timetable';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'https://rvce-ai-timetable-generator.onrender.com') + '/api/timetable';
 
 /**
  * Manual Adjustment Component with Drag-and-Drop

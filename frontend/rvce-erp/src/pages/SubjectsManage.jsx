@@ -20,7 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://rvce-ai-timetable-generator.onrender.com'
 
 export default function SubjectsManage() {
   const [searchQuery, setSearchQuery] = useState('')
