@@ -35,12 +35,10 @@ ai_timetable/
 │   ├── database.py            # Database connection setup
 │   ├── models.py              # SQLAlchemy/Pydantic models
 │   ├── auth.py                # Authentication module
-│   ├── parse_syllabus.py      # PDF syllabus parser utility
 │   ├── services/
 │   │   ├── supabase_service.py # Supabase REST API service
 │   │   ├── engine.py          # Timetable engine service
-│   │   ├── data_loader.py     # Data loading utilities
-│   │   └── validate_data.py   # Data validation
+│   │   └── data_loader.py     # Data loading utilities
 │   └── utils/
 │       └── load_supabase_data.py
 │
@@ -53,14 +51,6 @@ ai_timetable/
 │       │   └── context/       # React context providers
 │       ├── package.json
 │       └── vite.config.js
-│
-├── data/                       # Data Files
-│   ├── departments.csv        # Department information
-│   ├── faculty.csv            # Faculty details
-│   ├── rooms_3dept.csv        # Room/Lab information
-│   ├── sections_3dept.csv     # Section details
-│   ├── subjects_parsed.csv    # Subject/Course data
-│   └── syllabus/              # PDF syllabus files
 │
 ├── requirements.txt            # Python dependencies
 ├── .gitignore
