@@ -1,68 +1,219 @@
+@import "tailwindcss";
+
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  /* Brighton College Identity */
+  --bg-primary: #f6f7f0;
+  /* Light Cream */
+  --bg-secondary: #e6e7e0;
+  /* Light Grey */
+  --bg-white: #ffffff;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  --text-primary: #1a1a1a;
+  /* Almost Black */
+  --text-secondary: #4a4a4a;
+  /* Dark Grey */
+  --text-light: #f6f7f0;
+  /* Light Cream text */
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --accent-navy: #002147;
+  /* Deep Navy */
+  --accent-gold: #c5a059;
+  /* Subtle Gold/Beige */
+
+  /* RVCE Brand Compatibility */
+  --rvce-maroon: #8B0000;
+
+  /* Fonts */
+  --font-serif: "Playfair Display", serif;
+  --font-sans: "Inter", sans-serif;
+
+  /* Shadows */
+  --shadow-soft: 0 4px 20px rgba(0, 0, 0, 0.05);
+  --shadow-card: 0 2px 8px rgba(0, 33, 71, 0.08);
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
+/* Custom Utilities */
+.bg-accent-navy,
+.bg-navy {
+  background-color: var(--accent-navy);
 }
-a:hover {
-  color: #535bf2;
+
+.bg-accent-gold,
+.bg-gold {
+  background-color: var(--accent-gold);
+}
+
+.bg-rvce-maroon {
+  background-color: var(--rvce-maroon);
+}
+
+.bg-bg-secondary,
+.bg-cream {
+  background-color: var(--bg-secondary);
+}
+
+.text-accent-navy,
+.text-navy {
+  color: var(--accent-navy);
+}
+
+.text-accent-gold,
+.text-gold {
+  color: var(--accent-gold);
+}
+
+.text-text-secondary {
+  color: var(--text-secondary);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* Text Selection - ensures text is visible when selected */
+::selection {
+  background-color: var(--accent-navy);
+  color: white;
+}
+
+::-moz-selection {
+  background-color: var(--accent-navy);
+  color: white;
 }
 
 body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  font-family: var(--font-sans);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+/* Typography Utilities */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-serif);
+  color: var(--accent-navy);
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
+.font-serif-display {
+  font-family: var(--font-serif);
+}
+
+.font-sans-body {
+  font-family: var(--font-sans);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.8s ease-out forwards;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Interactive Elements */
+.btn-primary {
+  background-color: var(--accent-navy);
+  color: white;
+  padding: 12px 28px;
+  border-radius: 4px;
+  /* More square/classic */
+  font-family: var(--font-sans);
   font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+  letter-spacing: 0.02em;
+  transition: all 0.3s ease;
+  border: 1px solid var(--accent-navy);
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+.btn-primary:hover {
+  background-color: transparent;
+  color: var(--accent-navy);
+  transform: translateY(-1px);
+}
+
+.btn-outline {
+  background-color: transparent;
+  color: var(--accent-navy);
+  border: 1px solid var(--accent-navy);
+  padding: 12px 28px;
+  border-radius: 4px;
+  transition: all 0.3s ease;
+}
+
+.btn-outline:hover {
+  background-color: var(--accent-navy);
+  color: white;
+}
+
+/* Cards */
+.card-premium {
+  background: white;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s ease;
+}
+
+.card-premium:hover {
+  transform: translateY(-5px);
+  box-shadow: var(--shadow-soft);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Utility */
+.glass {
+  background: rgba(246, 247, 240, 0.85);
+  /* Matches bg-primary */
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }

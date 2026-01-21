@@ -3,51 +3,72 @@ import Toolbar from "@mui/material/Toolbar";
 import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
+import { School as SchoolIcon } from "@mui/icons-material";
 
 export default function Navbar({ setView, user, onLogout }) {
   const isAdmin = user?.role === "Admin";
-  const isTeacher = user?.role === "Teacher";
-  const isStudent = user?.role === "Student";
 
   return (
-    <AppBar position="static" sx={{ background: "#8B0000" }}>
+    <AppBar
+      position="static"
+      sx={{
+        background: "linear-gradient(135deg, #a80000 0%, #8b0000 100%)",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+      }}
+    >
       <Toolbar>
-        <Typography variant="h6" sx={{ flexGrow: 1 }}>
-          RVCE Timetable ERP
+        <SchoolIcon sx={{ mr: 2, fontSize: 28 }} />
+        <Typography
+          variant="h6"
+          sx={{
+            flexGrow: 1,
+            fontWeight: 700,
+            fontSize: "1.25rem",
+          }}
+        >
+          RVCE Timetable Management System
         </Typography>
 
-        <Box sx={{ mr: 3, textAlign: "right", fontSize: 13 }}>
-         <div>{user.external_id || user.role}</div>
-          <div style={{ opacity: 0.8 }}>{user.role}</div>
+        <Box
+          sx={{
+            mr: 3,
+            textAlign: "right",
+            fontSize: 13,
+            opacity: 0.9,
+          }}
+        >
+          <div style={{ fontWeight: 600 }}>{user?.full_name || user?.username}</div>
+          <div style={{ fontSize: "0.75rem", opacity: 0.8 }}>{user?.role}</div>
         </Box>
 
-        {/* Admin Only */}
         {isAdmin && (
           <>
-            <Button color="inherit" onClick={() => setView("dashboard")}>Dashboard</Button>
-            <Button color="inherit" onClick={() => setView("master")}>Master</Button>
-            <Button color="inherit" onClick={() => setView("teacher")}>Teachers</Button>
-            <Button color="inherit" onClick={() => setView("section")}>Sections</Button>
-            <Button color="inherit" onClick={() => setView("room")}>Rooms</Button>
-            <Button color="inherit" onClick={() => setView("upload")}>Upload Data</Button>
+            <Button
+              color="inherit"
+              onClick={() => setView("dashboard")}
+              sx={{ fontWeight: 500 }}
+            >
+              Dashboard
+            </Button>
+            <Button
+              color="inherit"
+              onClick={() => setView("upload")}
+              sx={{ fontWeight: 500 }}
+            >
+              Upload CSV
+            </Button>
           </>
         )}
 
-        {/* Teacher Only */}
-        {isTeacher && (
-          <Button color="inherit" onClick={() => setView("teacher")}>
-            My Timetable
-          </Button>
-        )}
-
-        {/* Student Only */}
-        {isStudent && (
-          <Button color="inherit" onClick={() => setView("section")}>
-            My Timetable
-          </Button>
-        )}
-
-        <Button color="inherit" sx={{ ml: 2 }} onClick={onLogout}>
+        <Button
+          color="inherit"
+          onClick={onLogout}
+          sx={{
+            ml: 2,
+            fontWeight: 600,
+            "&:hover": { background: "rgba(255,255,255,0.1)" },
+          }}
+        >
           Logout
         </Button>
       </Toolbar>

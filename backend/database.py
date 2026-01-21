@@ -1,25 +1,38 @@
 # backend/database.py
+
 import os
+from dotenv import load_dotenv
+from typing import Generator
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
-# For deployment: set DATABASE_URL to your Postgres URL, e.g.
-# postgresql+psycopg2://user:password@host:5432/dbname
-DATABASE_URL = "sqlite:///./rvce_timetable.db"
+# load .env
+load_dotenv(override=True)
 
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(
-        DATABASE_URL, connect_args={"check_same_thread": False}
-    )
-else:
-    engine = create_engine(DATABASE_URL)
+# For now, use SQLite for mock data. Later switch to Supabase PostgreSQL
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./rvce_timetable.db")
+if DATABASE_URL.startswith("postgres") and "sslmode" not in DATABASE_URL:
+    DATABASE_URL += "?sslmode=require"
+
+# DEBUG PRINT
+print(f"DEBUG: SQLAlchemy connecting to: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
+
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,  # Set to True for SQL debugging
+    pool_pre_ping=False,
+    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
+)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
 
-def get_db():
+# Dependency for FastAPI routes
+def get_db() -> Generator[Session, None, None]:
+    """Database session dependency"""
     db = SessionLocal()
     try:
         yield db

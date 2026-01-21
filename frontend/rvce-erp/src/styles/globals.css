@@ -1,0 +1,260 @@
+@import "tailwindcss";
+
+/* CSS Variables for Light Theme */
+:root {
+  --background: 0 0% 98%;
+  --foreground: 222.2 47% 11.2%;
+  --card: 0 0% 100%;
+  --card-foreground: 222.2 47% 11.2%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 47% 11.2%;
+  --primary: 221.2 83.2% 53.3%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --accent: 221.2 83.2% 53.3%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --ring: 221.2 83.2% 53.3%;
+  --radius: 0.75rem;
+
+  /* Light Theme Specific */
+  --sidebar-bg: 220 20% 97%;
+  --sidebar-border: 220 13% 91%;
+  --nav-bg: 0 0% 100%;
+  
+  /* Brand Colors */
+  --accent-navy: #002147;
+  --accent-gold: #c5a059;
+}
+
+/* Text Selection - ensures text is visible when selected */
+::selection {
+  background-color: var(--accent-navy);
+  color: white;
+}
+
+::-moz-selection {
+  background-color: var(--accent-navy);
+  color: white;
+}
+
+/* Focus visible styling for accessibility */
+*:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+
+/* Prevent buttons from getting white text on focus */
+button:focus,
+button:active,
+[role="button"]:focus,
+[role="button"]:active {
+  color: inherit;
+}
+
+/* Fix for Tailwind ring causing visibility issues */
+.focus\:ring-0:focus,
+button:focus {
+  --tw-ring-color: transparent;
+}
+
+/* Ensure text remains visible in interactive elements */
+button,
+[role="button"],
+.cursor-pointer {
+  -webkit-tap-highlight-color: rgba(0, 33, 71, 0.1);
+}
+
+/* Fix white text on active/focus states */
+button:not([class*="bg-accent-navy"]):not([class*="bg-blue"]):active,
+button:not([class*="bg-accent-navy"]):not([class*="bg-blue"]):focus {
+  background-color: inherit;
+}
+
+/* Custom Brand Utilities */
+.bg-accent-navy,
+.bg-navy {
+  background-color: var(--accent-navy) !important;
+}
+
+.bg-accent-gold,
+.bg-gold {
+  background-color: var(--accent-gold) !important;
+}
+
+.text-accent-navy,
+.text-navy {
+  color: var(--accent-navy) !important;
+}
+
+.text-accent-gold,
+.text-gold {
+  color: var(--accent-gold) !important;
+}
+
+.text-text-secondary {
+  color: #4a4a4a;
+}
+
+.bg-bg-primary {
+  background-color: #f6f7f0;
+}
+
+.bg-bg-secondary {
+  background-color: #e6e7e0;
+}
+
+.border-accent-navy {
+  border-color: var(--accent-navy) !important;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background-color: #f8fafc;
+  color: #1e293b;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Glassmorphism Utilities */
+.glass {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.05);
+}
+
+/* Soft Card Style */
+.soft-card {
+  background: white;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 6px 16px rgba(0, 0, 0, 0.04);
+  border-radius: var(--radius);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Gradient Text */
+.gradient-text {
+  background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(262.1 83.3% 57.8%) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Card Hover Effect */
+.card-hover {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.1);
+}
+
+/* Subtle Shadow Levels */
+.shadow-soft-sm {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.shadow-soft {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+.shadow-soft-lg {
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.04), 0 10px 24px rgba(0, 0, 0, 0.08);
+}
+
+/* Skeleton Animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 25%,
+    hsl(var(--muted-foreground) / 0.1) 50%,
+    hsl(var(--muted)) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Timetable Cell Styles */
+.timetable-cell {
+  transition: all 0.2s ease;
+}
+
+.timetable-cell:hover {
+  transform: scale(1.02);
+  z-index: 10;
+}
+
+.timetable-cell-theory {
+  background: linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%);
+  border-left: 3px solid #3b82f6;
+}
+
+.timetable-cell-lab {
+  background: linear-gradient(135deg, #f3e8ff 0%, #fae8ff 100%);
+  border-left: 3px solid #a855f7;
+}
+
+.timetable-cell-break {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+}
+
+.timetable-cell-lunch {
+  background: linear-gradient(135deg, #fed7aa 0%, #fdba74 100%);
+}
+
+/* Manual Assignment Drag & Drop */
+.drag-handle {
+  cursor: grab;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.drop-zone {
+  transition: all 0.2s ease;
+}
+
+.drop-zone-active {
+  background: hsl(var(--primary) / 0.1);
+  border: 2px dashed hsl(var(--primary));
+}
