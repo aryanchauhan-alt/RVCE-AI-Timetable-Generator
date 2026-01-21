@@ -10,3 +10,4 @@ python-multipart==0.0.6
 supabase
 pdfplumber
 httpx
+psycopg2-binary
