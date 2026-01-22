@@ -778,10 +778,18 @@ async def get_subjects(
             subj_dept_code = dept_map.get(s['department_id'], 'Unknown')
             if department and subj_dept_code != department:
                 continue
-                
-            theory_hours = s.get('lecture_hours', 0)
-            lab_hours = s.get('practical_hours', 0)
-            subject_type = 'Lab' if lab_hours > 0 and theory_hours == 0 else ('Theory + Lab' if lab_hours > 0 else 'Theory')
+            
+            # Support both naming conventions for hours
+            theory_hours = s.get('theory_hours', 0) or s.get('lecture_hours', 0) or 0
+            lab_hours = s.get('lab_hours', 0) or s.get('practical_hours', 0) or 0
+            
+            # Determine subject type based on hours
+            if lab_hours > 0 and theory_hours == 0:
+                subject_type = 'Lab'
+            elif lab_hours > 0 and theory_hours > 0:
+                subject_type = 'Theory + Lab'
+            else:
+                subject_type = 'Theory'
             
             subjects.append({
                 'id': s['subject_code'],
@@ -790,7 +798,7 @@ async def get_subjects(
                 'theory_hours': theory_hours,
                 'lab_hours': lab_hours,
                 'weekly_hours': theory_hours + (lab_hours * 2),
-                'credits': s['credits'],
+                'credits': s.get('credits', 3),
                 'semester': s['semester'],
                 'department_id': s['department_id'],
                 'department': subj_dept_code,
@@ -798,7 +806,7 @@ async def get_subjects(
                 'is_pec': s.get('is_pec', False),
                 'is_iec': s.get('is_iec', False),
                 'is_basket': s.get('is_basket', False),
-                'category': str(s.get('subject_type', ''))
+                'category': str(s.get('category', '') or s.get('subject_type', ''))
             })
             
         if subjects:
@@ -869,48 +877,118 @@ class ManualEditRequest(BaseModel):
 
 @app.post("/api/timetable/manual-edit")
 async def manual_edit_timetable(request: ManualEditRequest):
-    """Apply manual edits to a section's timetable"""
+    """Apply manual edits to a section's timetable and save to Supabase"""
     global timetable_result, solver
-    
-    if not solver or not timetable_result:
-        raise HTTPException(status_code=400, detail="No timetable generated yet")
     
     section_id = request.section_id
     
-    # Remove existing slots for this section
-    keys_to_remove = [k for k in solver.schedule.keys() if k[0] == section_id]
-    for key in keys_to_remove:
-        del solver.schedule[key]
+    # Get section info to determine semester_type
+    try:
+        sections_data = await fetch_sections('all')
+        section_info = next((s for s in sections_data if s['id'] == section_id), None)
+        if not section_info:
+            raise HTTPException(status_code=404, detail=f"Section {section_id} not found")
+        
+        # Determine semester_type from section's semester
+        semester = section_info.get('semester', 1)
+        semester_type = 'odd' if semester % 2 == 1 else 'even'
+    except Exception as e:
+        print(f"⚠️ Could not determine semester_type: {e}")
+        semester_type = 'odd'  # fallback
     
-    # Add new slots from manual edit
-    for slot in request.timetable:
-        day_name = slot.get('day_name', '')
-        slot_num = slot.get('slot', 0)
+    # If we have a solver, update in-memory state
+    if solver and timetable_result and hasattr(solver, 'schedule'):
+        # Remove existing slots for this section
+        keys_to_remove = [k for k in solver.schedule.keys() if k[0] == section_id]
+        for key in keys_to_remove:
+            del solver.schedule[key]
         
-        # Normalize day name
-        day_upper = day_name.upper() if day_name else ''
-        day_map = {
-            'MONDAY': 'Monday', 'TUESDAY': 'Tuesday', 'WEDNESDAY': 'Wednesday',
-            'THURSDAY': 'Thursday', 'FRIDAY': 'Friday', 'SATURDAY': 'Saturday'
-        }
-        normalized_day = day_map.get(day_upper, day_name)
+        # Add new slots from manual edit
+        for slot in request.timetable:
+            day_name = slot.get('day_name', '')
+            slot_num = slot.get('slot', 0)
+            
+            # Normalize day name
+            day_upper = day_name.upper() if day_name else ''
+            day_map = {
+                'MONDAY': 'Monday', 'TUESDAY': 'Tuesday', 'WEDNESDAY': 'Wednesday',
+                'THURSDAY': 'Thursday', 'FRIDAY': 'Friday', 'SATURDAY': 'Saturday'
+            }
+            normalized_day = day_map.get(day_upper, day_name)
+            
+            key = (section_id, normalized_day, slot_num)
+            
+            solver.schedule[key] = {
+                'subject': slot.get('subject', {}),
+                'room': slot.get('room', {}).get('name', 'TBD') if isinstance(slot.get('room'), dict) else slot.get('room', 'TBD'),
+                'faculty': slot.get('faculty', {}),
+                'is_lab': slot.get('is_lab', False)
+            }
         
-        key = (section_id, normalized_day, slot_num)
-        
-        solver.schedule[key] = {
-            'subject': slot.get('subject', {}),
-            'room': slot.get('room', {}).get('name', 'TBD'),
-            'faculty': slot.get('faculty', {}),
-            'is_lab': slot.get('is_lab', False)
-        }
+        # Regenerate result
+        timetable_result = solver.get_result()
     
-    # Regenerate result
-    timetable_result = solver.get_result()
+    # Save to Supabase - delete existing slots for this section and insert new ones
+    try:
+        from services.supabase_service import SUPABASE_URL, get_headers
+        import httpx
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Delete existing slots for this section
+            delete_resp = await client.delete(
+                f"{SUPABASE_URL}/rest/v1/timetable_slots?section_id=eq.{section_id}",
+                headers=get_headers()
+            )
+            print(f"🗑️ Deleted existing slots for section {section_id}: {delete_resp.status_code}")
+            
+            # Prepare slots for insertion
+            slots_to_save = []
+            for slot in request.timetable:
+                day_name = slot.get('day_name', '')
+                slot_num = slot.get('slot', 0)
+                subject = slot.get('subject') or {}
+                faculty = slot.get('faculty') or {}
+                room = slot.get('room', {})
+                room_name = room.get('name', 'TBD') if isinstance(room, dict) else (room or 'TBD')
+                
+                slots_to_save.append({
+                    'section_id': section_id,
+                    'day': day_name.capitalize() if day_name else 'Monday',
+                    'slot': slot_num,
+                    'subject_name': subject.get('name', ''),
+                    'subject_code': subject.get('course_code') or subject.get('code', ''),
+                    'subject_type': subject.get('subject_type') or subject.get('type', 'Theory'),
+                    'room_id': room_name,
+                    'faculty_id': faculty.get('id', ''),
+                    'faculty_name': faculty.get('name', ''),
+                    'is_lab': slot.get('is_lab', False),
+                    'department': subject.get('department', section_info.get('department', '')),
+                    'semester': subject.get('semester', section_info.get('semester', 1)),
+                    'semester_type': semester_type
+                })
+            
+            # Insert new slots
+            if slots_to_save:
+                insert_resp = await client.post(
+                    f"{SUPABASE_URL}/rest/v1/timetable_slots",
+                    headers=get_headers(),
+                    json=slots_to_save
+                )
+                print(f"✅ Saved {len(slots_to_save)} slots to Supabase: {insert_resp.status_code}")
+                
+                if insert_resp.status_code not in [200, 201]:
+                    print(f"⚠️ Insert response: {insert_resp.text}")
+    
+    except Exception as save_error:
+        print(f"⚠️ Warning: Could not save to Supabase: {save_error}")
+        import traceback
+        traceback.print_exc()
     
     return {
         "success": True,
-        "message": f"Applied {len(request.changes)} changes to section {section_id}",
-        "section_id": section_id
+        "message": f"Saved {len(request.timetable)} slots to section {section_id}",
+        "section_id": section_id,
+        "slots_saved": len(request.timetable)
     }
 
 

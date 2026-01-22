@@ -89,6 +89,18 @@ class TimetableSolverV7:
         # Track unscheduled subjects for reporting
         self.unscheduled_subjects = []
         
+        # NEW: Track section subject-slot patterns to prevent same slot on consecutive days
+        # section_id -> {subject_code: [(day, slot), ...]}
+        self.section_subject_slots = defaultdict(lambda: defaultdict(list))
+        
+        # NEW: Track faculty consecutive classes per day
+        # faculty_id -> {day: [slots]}
+        self.faculty_daily_slots = defaultdict(lambda: defaultdict(list))
+        
+        # NEW: Track faculty consecutive blocks count
+        # faculty_id -> count of days with 2+ consecutive theory classes
+        self.faculty_consecutive_blocks = defaultdict(int)
+        
     async def load_data(self):
         """Load data from Supabase database"""
         print("📥 Loading data from Supabase...")
@@ -214,6 +226,7 @@ class TimetableSolverV7:
                 'is_institutional_elective': is_iec,
                 'is_basket': is_basket,
                 'is_pec': is_pec,
+                'is_bridge_course': 'bridge course' in row['subject_name'].lower(),  # NEW: Flag bridge courses
                 'l': l, 't': 0, 'p': p
             }
             
@@ -348,17 +361,105 @@ class TimetableSolverV7:
         if faculty_id.startswith("TBA_"): return True  # TBA faculty is always available
         return (day, slot) not in self.faculty_schedule[faculty_id]
 
-    def get_available_faculty(self, subject: dict, day: str, slot: int, section_id: int = None) -> Optional[dict]:
+    def would_create_pattern_violation(self, section_id: int, subject_code: str, day: str, slot: int) -> bool:
+        """SOFT CONSTRAINT: Check if scheduling this would create same subject at same slot on 3+ consecutive days.
+        
+        This prevents patterns like "Logic Design at slot 1 on Mon, Tue, Wed"
+        """
+        day_order = {'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3, 'Friday': 4, 'Saturday': 5}
+        current_day_idx = day_order.get(day, 5)
+        
+        # Get existing slots for this subject in this section
+        existing_slots = self.section_subject_slots[section_id].get(subject_code, [])
+        
+        # Find slots at the same time (same slot number)
+        same_slot_days = [d for (d, s) in existing_slots if s == slot]
+        
+        if len(same_slot_days) < 2:
+            return False  # Need at least 2 existing to form a pattern with this one
+        
+        # Check if adding this day would create 3 consecutive days
+        same_slot_day_indices = [day_order.get(d, 5) for d in same_slot_days] + [current_day_idx]
+        same_slot_day_indices.sort()
+        
+        # Check for 3 consecutive
+        for i in range(len(same_slot_day_indices) - 2):
+            if (same_slot_day_indices[i+1] == same_slot_day_indices[i] + 1 and 
+                same_slot_day_indices[i+2] == same_slot_day_indices[i+1] + 1):
+                return True
+        
+        return False
+    
+    def would_exceed_consecutive_limit(self, faculty_id: str, day: str, slot: int, is_lab: bool = False) -> bool:
+        """SOFT CONSTRAINT: Check if faculty would have 2+ consecutive theory blocks more than once per week.
+        
+        Labs are exempt from this constraint.
+        """
+        if is_lab or faculty_id.startswith("TBA_"):
+            return False
+        
+        # Get faculty's current slots on this day
+        daily_slots = list(self.faculty_daily_slots[faculty_id][day])
+        daily_slots.append(slot)
+        daily_slots.sort()
+        
+        # Count consecutive blocks (2+ consecutive slots) on this day
+        consecutive_on_day = 0
+        i = 0
+        while i < len(daily_slots):
+            block_size = 1
+            while i + block_size < len(daily_slots) and daily_slots[i + block_size] == daily_slots[i] + block_size:
+                block_size += 1
+            if block_size >= 2:
+                consecutive_on_day += 1
+            i += block_size
+        
+        if consecutive_on_day == 0:
+            return False
+        
+        # Check total consecutive blocks across all days
+        total_consecutive_blocks = self.faculty_consecutive_blocks.get(faculty_id, 0)
+        
+        # If this day already had a consecutive block, don't count again
+        old_daily_slots = list(self.faculty_daily_slots[faculty_id][day])
+        old_daily_slots.sort()
+        had_consecutive_before = False
+        i = 0
+        while i < len(old_daily_slots):
+            block_size = 1
+            while i + block_size < len(old_daily_slots) and old_daily_slots[i + block_size] == old_daily_slots[i] + block_size:
+                block_size += 1
+            if block_size >= 2:
+                had_consecutive_before = True
+                break
+            i += block_size
+        
+        # If we're adding a NEW consecutive block
+        if consecutive_on_day > 0 and not had_consecutive_before:
+            # Allow at most 1 day per week with consecutive blocks
+            if total_consecutive_blocks >= 1:
+                return True
+        
+        return False
+
+    def get_available_faculty(self, subject: dict, day: str, slot: int, section_id: int = None, is_lab: bool = False) -> Optional[dict]:
         """Get an available faculty for the subject at the given time
         
         Uses STRICT load balancing to distribute faculty across sections:
         - ALWAYS prioritizes faculty with fewer assigned hours
         - Only rotates among faculty with same (minimum) hours
         - Ensures even distribution across all qualified faculty
+        - HARD CONSTRAINT: Must return actual faculty, not TBA
+        - SOFT CONSTRAINT: Avoid consecutive theory blocks > 1 per week
         """
         faculty_options = subject.get('faculty_options', [])
+        
+        # If no faculty options, try to find ANY faculty from the department
         if not faculty_options:
-            return subject.get('faculty')  # Return TBA faculty
+            dept = subject.get('department', '')
+            dept_faculty = [f for f in self.faculty if f['department'] == dept]
+            if dept_faculty:
+                faculty_options = dept_faculty
         
         # Filter to only available faculty
         available = []
@@ -368,17 +469,56 @@ class TimetableSolverV7:
                 current_hours = self.get_faculty_hours(faculty['id'])
                 max_hours = faculty.get('max_hours', 18)  # Default to 18, not 40
                 if current_hours < max_hours:
+                    # Check consecutive block constraint (soft - prefer those who won't exceed)
+                    would_exceed = self.would_exceed_consecutive_limit(faculty['id'], day, slot, is_lab)
+                    
                     # Calculate workload percentage for better balancing
                     workload_pct = (current_hours / max_hours) * 100 if max_hours > 0 else 0
                     available.append({
                         'faculty': faculty,
                         'hours': current_hours,
                         'max_hours': max_hours,
-                        'workload_pct': workload_pct
+                        'workload_pct': workload_pct,
+                        'would_exceed_consecutive': would_exceed
                     })
         
         if not available:
-            # If no faculty is free, return TBA as fallback
+            # SECOND ATTEMPT: Try ANY faculty from the department who is free
+            dept = subject.get('department', '')
+            dept_faculty = [f for f in self.faculty if f['department'] == dept]
+            for faculty in dept_faculty:
+                if self.is_faculty_free(faculty['id'], day, slot):
+                    current_hours = self.get_faculty_hours(faculty['id'])
+                    max_hours = faculty.get('max_hours', 18)
+                    if current_hours < max_hours:
+                        workload_pct = (current_hours / max_hours) * 100 if max_hours > 0 else 0
+                        available.append({
+                            'faculty': faculty,
+                            'hours': current_hours,
+                            'max_hours': max_hours,
+                            'workload_pct': workload_pct,
+                            'would_exceed_consecutive': False
+                        })
+        
+        if not available:
+            # THIRD ATTEMPT: Find any faculty who is free (cross-department) 
+            for faculty in self.faculty:
+                if self.is_faculty_free(faculty['id'], day, slot):
+                    current_hours = self.get_faculty_hours(faculty['id'])
+                    max_hours = faculty.get('max_hours', 18)
+                    if current_hours < max_hours:
+                        workload_pct = (current_hours / max_hours) * 100 if max_hours > 0 else 0
+                        available.append({
+                            'faculty': faculty,
+                            'hours': current_hours,
+                            'max_hours': max_hours,
+                            'workload_pct': workload_pct,
+                            'would_exceed_consecutive': False
+                        })
+                        break  # Just need one
+        
+        if not available:
+            # FINAL FALLBACK: Return TBA only if absolutely no faculty available
             return {
                 'id': f"TBA_{subject.get('department', 'DEPT')}",
                 'name': 'TBA',
@@ -386,12 +526,16 @@ class TimetableSolverV7:
                 'max_hours': 99
             }
         
-        # Sort by workload percentage (ascending) - prefer faculty with lower % utilization
-        # This balances better when faculty have different max_hours
-        available.sort(key=lambda x: (x['workload_pct'], x['hours']))
+        # Sort by: 1) consecutive limit (prefer not exceeding), 2) workload percentage
+        available.sort(key=lambda x: (x['would_exceed_consecutive'], x['workload_pct'], x['hours']))
         
         # STRICT WORKLOAD BALANCING: Only rotate among faculty with same low workload
         if len(available) > 1:
+            # Prefer faculty who won't exceed consecutive limit
+            non_exceeding = [f for f in available if not f['would_exceed_consecutive']]
+            if non_exceeding:
+                available = non_exceeding
+            
             min_pct = available[0]['workload_pct']
             # Get all faculty within 10% of minimum workload
             balanced_options = [f for f in available if f['workload_pct'] <= min_pct + 10]
@@ -521,7 +665,7 @@ class TimetableSolverV7:
     def assign_slot(self, section_id: int, day: str, slot: int, subject: dict, room: str, is_lab: bool = False, faculty: dict = None):
         # Get faculty if not provided - pass section_id for rotation
         if faculty is None:
-            faculty = self.get_available_faculty(subject, day, slot, section_id)
+            faculty = self.get_available_faculty(subject, day, slot, section_id, is_lab)
         
         self.schedule[(section_id, day, slot)] = {
             'subject': subject,
@@ -535,11 +679,72 @@ class TimetableSolverV7:
         # Track faculty schedule
         if faculty and not faculty['id'].startswith("TBA_"):
             self.faculty_schedule[faculty['id']].append((day, slot))
+            
+            # Track daily slots for consecutive block detection
+            self.faculty_daily_slots[faculty['id']][day].append(slot)
+            
+            # Update consecutive block count if needed
+            if not is_lab:
+                daily_slots = sorted(self.faculty_daily_slots[faculty['id']][day])
+                has_consecutive = False
+                i = 0
+                while i < len(daily_slots):
+                    block_size = 1
+                    while i + block_size < len(daily_slots) and daily_slots[i + block_size] == daily_slots[i] + block_size:
+                        block_size += 1
+                    if block_size >= 2:
+                        has_consecutive = True
+                        break
+                    i += block_size
+                
+                # Count days with consecutive blocks
+                days_with_consecutive = sum(
+                    1 for d in WEEKDAYS 
+                    if self._day_has_consecutive_theory(faculty['id'], d)
+                )
+                self.faculty_consecutive_blocks[faculty['id']] = days_with_consecutive
         
         # Track subject-slot usage for cross-section conflict prevention
         subj_id = subject.get('id', subject.get('name'))
         faculty_id = faculty['id'] if faculty else 'TBA'
         self.subject_slot_usage[(subj_id, day, slot)].append((section_id, faculty_id))
+        
+        # Track section subject-slot patterns for pattern violation detection
+        subject_code = subject.get('course_code', subject.get('name', ''))
+        self.section_subject_slots[section_id][subject_code].append((day, slot))
+    
+    def _day_has_consecutive_theory(self, faculty_id: str, day: str) -> bool:
+        """Check if faculty has 2+ consecutive theory slots on a day"""
+        daily_slots = sorted(self.faculty_daily_slots[faculty_id][day])
+        i = 0
+        while i < len(daily_slots):
+            block_size = 1
+            while i + block_size < len(daily_slots) and daily_slots[i + block_size] == daily_slots[i] + block_size:
+                block_size += 1
+            # Check if these are theory (not lab) slots
+            # For simplicity, assume most consecutive slots are theory unless explicitly lab
+            if block_size >= 2:
+                return True
+            i += block_size
+        return False
+
+    def is_bridge_course(self, subject: dict) -> bool:
+        """Check if a subject is a bridge course"""
+        name = subject.get('name', '').lower()
+        return 'bridge course' in name or subject.get('is_bridge_course', False)
+    
+    def get_last_slot_of_day(self, section_id: int, day: str) -> int:
+        """Get the last slot that should be used for the day.
+        
+        For weekdays: slot 6 (3:30-4:30 PM)
+        For Saturday: slot 4 (12:30-1:30 PM)
+        
+        But if earlier slots are filled and bridge course needs to be last,
+        we return the appropriate last slot.
+        """
+        if day == 'Saturday':
+            return 4
+        return 6
 
     def get_faculty_hours(self, faculty_id: str) -> int:
         """Get total hours assigned to a faculty member"""
@@ -815,11 +1020,13 @@ class TimetableSolverV7:
                 occupied.append(slot)
         return occupied
 
-    def find_compact_slot(self, section_id: int, day: str, avoid_consecutive_same_subject: str = None, prefer_morning: bool = True) -> Optional[int]:
+    def find_compact_slot(self, section_id: int, day: str, avoid_consecutive_same_subject: str = None, prefer_morning: bool = True, subject_code: str = None) -> Optional[int]:
         """Find an available slot - prioritize filling from morning but DON'T block scheduling.
         
         PRIORITY: Complete scheduling is more important than compactness.
         Compaction happens in post-processing.
+        
+        SOFT CONSTRAINT: Avoid pattern violations (same subject same slot on consecutive days)
         """
         slots = self.get_slots_for_day(day)
         occupied = set(self.get_section_day_slots(section_id, day))
@@ -827,12 +1034,17 @@ class TimetableSolverV7:
         # Try slots in order: morning first
         preferred_order = [1, 2, 3, 4, 5, 6]
         
+        # First pass: respect all soft constraints
         for slot in preferred_order:
             if slot not in slots:
                 continue
             if slot in occupied:
                 continue
             if not self.is_slot_free(section_id, day, slot):
+                continue
+            
+            # Check pattern violation constraint (soft - try to avoid)
+            if subject_code and self.would_create_pattern_violation(section_id, subject_code, day, slot):
                 continue
             
             # Check consecutive same subject constraint (soft - skip if violated)
@@ -846,8 +1058,8 @@ class TimetableSolverV7:
             
             return slot
         
-        # If no slot found with subject constraint, try without it
-        if avoid_consecutive_same_subject:
+        # Second pass: relax pattern constraint but keep consecutive same subject constraint
+        if subject_code:
             for slot in preferred_order:
                 if slot not in slots:
                     continue
@@ -855,7 +1067,26 @@ class TimetableSolverV7:
                     continue
                 if not self.is_slot_free(section_id, day, slot):
                     continue
+                
+                if avoid_consecutive_same_subject:
+                    prev_key = (section_id, day, slot - 1)
+                    next_key = (section_id, day, slot + 1)
+                    if prev_key in self.schedule and self.schedule[prev_key]['subject'].get('name') == avoid_consecutive_same_subject:
+                        continue
+                    if next_key in self.schedule and self.schedule[next_key]['subject'].get('name') == avoid_consecutive_same_subject:
+                        continue
+                
                 return slot
+        
+        # Final pass: try without any constraints (just need to schedule)
+        for slot in preferred_order:
+            if slot not in slots:
+                continue
+            if slot in occupied:
+                continue
+            if not self.is_slot_free(section_id, day, slot):
+                continue
+            return slot
         
         return None
 
@@ -1545,6 +1776,7 @@ class TimetableSolverV7:
                 and not s.get('is_basket')
                 and not s.get('is_pec')  # Skip PCE subjects
                 and not s.get('is_iec')  # Skip IE subjects
+                and not self.is_bridge_course(s)  # Skip bridge courses - scheduled separately
             ]
             section_hours_needed[section['id']] = sum(s['weekly_hours'] for s in theory_subjects)
         
@@ -1553,7 +1785,7 @@ class TimetableSolverV7:
             sem = section['semester']
             acad_year = self.get_section_academic_year(section)
             
-            # Exclude Baskets, PCE, and IE - they have dedicated schedulers
+            # Exclude Baskets, PCE, IE, and Bridge Courses - they have dedicated schedulers
             theory_subjects = [
                 s for s in self.subjects 
                 if s['department'] == dept 
@@ -1562,6 +1794,7 @@ class TimetableSolverV7:
                 and not s.get('is_basket')
                 and not s.get('is_pec')  # Skip PCE - scheduled by schedule_pce_blocks
                 and not s.get('is_iec')  # Skip IE - scheduled by schedule_ie_blocks
+                and not self.is_bridge_course(s)  # Skip bridge courses - scheduled last
             ]
             
             # Sort by weekly hours descending (schedule heavy subjects first)
@@ -1598,10 +1831,14 @@ class TimetableSolverV7:
                 hours_needed = subj['weekly_hours']
                 hours_assigned = 0
                 max_concurrent = faculty_counts.get(subj['id'], 1)
+                subject_code = subj.get('course_code', subj.get('name', ''))
                 
                 # WEEKDAYS FIRST - Different starting days for different sections
                 day_rotation = (sec_idx + subj_idx) % len(WEEKDAYS)
                 days_order = WEEKDAYS[day_rotation:] + WEEKDAYS[:day_rotation]
+                
+                # Use different slot preferences for different subjects to spread them out
+                slot_rotation = subj_idx % 3  # Rotate between morning (1-2), midday (3-4), afternoon (5-6)
                 
                 for day in days_order:
                     if hours_assigned >= hours_needed: break
@@ -1612,8 +1849,8 @@ class TimetableSolverV7:
                                       and self.schedule[(section['id'], day, s)]['subject']['id'] == subj['id'])
                     if hours_on_day >= 1: continue
                     
-                    # Find any available slot
-                    slot = self.find_compact_slot(section['id'], day, subj['name'], prefer_morning=True)
+                    # Find any available slot - pass subject_code for pattern checking
+                    slot = self.find_compact_slot(section['id'], day, subj['name'], prefer_morning=True, subject_code=subject_code)
                     if slot is None: continue
                     
                     # Check room availability
@@ -1679,6 +1916,105 @@ class TimetableSolverV7:
                     })
                     print(f"    ⚠️ Could not fully schedule {subj['name']} for {dept}-{section['section']} (Assigned {hours_assigned}/{hours_needed})")
 
+    def schedule_bridge_courses(self):
+        """Schedule Bridge Courses - MUST be the LAST class of the day.
+        
+        Bridge courses are special remedial courses that should always be
+        scheduled in the last slot of whatever day they are assigned to.
+        This allows students who don't need the bridge course to leave early.
+        
+        Strategy:
+        1. Find all bridge course subjects
+        2. For each section, find available last slots (slot 6 on weekdays, slot 4 on Saturday)
+        3. Schedule bridge courses in these slots
+        4. Ensure no other classes are scheduled after bridge courses on the same day
+        """
+        print("  > Scheduling Bridge Courses (MUST be last class of the day)...")
+        
+        # Collect all bridge course subjects
+        bridge_subjects = [s for s in self.subjects if self.is_bridge_course(s)]
+        
+        if not bridge_subjects:
+            print("    No bridge courses found")
+            return
+        
+        print(f"    Found {len(bridge_subjects)} bridge course subjects")
+        
+        # Group by department and semester
+        bridge_by_dept_sem = defaultdict(list)
+        for s in bridge_subjects:
+            key = (s['department'], s['semester'])
+            bridge_by_dept_sem[key].append(s)
+        
+        total_scheduled = 0
+        
+        for section in self.sections:
+            dept = section['department']
+            sem = section['semester']
+            
+            # Get bridge courses for this section
+            section_bridge = bridge_by_dept_sem.get((dept, sem), [])
+            if not section_bridge:
+                continue
+            
+            for bridge_subj in section_bridge:
+                hours_needed = bridge_subj.get('weekly_hours', 2)
+                hours_scheduled = 0
+                
+                # Try to schedule in last slots of weekdays first
+                # Priority: Slot 6 (last slot) on different weekdays
+                for day in WEEKDAYS:
+                    if hours_scheduled >= hours_needed:
+                        break
+                    
+                    last_slot = self.get_last_slot_of_day(section['id'], day)
+                    
+                    # Check if last slot is free
+                    if not self.is_slot_free(section['id'], day, last_slot):
+                        # Try to find the actual last occupied slot and use the slot after
+                        # Or find a day where we can make last slot free
+                        continue
+                    
+                    # Verify no classes are scheduled after this slot on this day
+                    # (For weekdays, slot 6 is already last, so this is automatic)
+                    
+                    # Find a room
+                    room = section.get('dedicated_room')
+                    if not room or not self.is_room_free(room, day, last_slot):
+                        room = self.get_any_classroom(dept, day, last_slot)
+                    if not room:
+                        room = f"Virtual_{dept}_{section['section']}"
+                    
+                    # Get faculty
+                    faculty = self.get_available_faculty(bridge_subj, day, last_slot, section['id'])
+                    
+                    # Assign the bridge course
+                    self.assign_slot(section['id'], day, last_slot, bridge_subj, room, faculty=faculty)
+                    hours_scheduled += 1
+                    total_scheduled += 1
+                
+                # If weekdays not enough, try Saturday (slot 4 is last on Saturday)
+                if hours_scheduled < hours_needed:
+                    day = 'Saturday'
+                    last_slot = 4  # Last slot on Saturday
+                    
+                    if self.is_slot_free(section['id'], day, last_slot):
+                        room = section.get('dedicated_room')
+                        if not room or not self.is_room_free(room, day, last_slot):
+                            room = self.get_any_classroom(dept, day, last_slot)
+                        if not room:
+                            room = f"Virtual_{dept}_{section['section']}"
+                        
+                        faculty = self.get_available_faculty(bridge_subj, day, last_slot, section['id'])
+                        self.assign_slot(section['id'], day, last_slot, bridge_subj, room, faculty=faculty)
+                        hours_scheduled += 1
+                        total_scheduled += 1
+                
+                if hours_scheduled < hours_needed:
+                    print(f"    ⚠️ Could not schedule all hours for {bridge_subj['name']} ({dept} Sem {sem} Sec {section['section']}): {hours_scheduled}/{hours_needed}")
+        
+        print(f"    ✅ Scheduled {total_scheduled} bridge course slots (all in last slot of day)")
+
     async def generate(self):
         print("\n" + "="*60)
         print(f"🎓 TIMETABLE SOLVER V7 - {self.semester_type.upper()} Semesters")
@@ -1705,7 +2041,10 @@ class TimetableSolverV7:
         # 6. Theory - HARD CONSTRAINT: 100% scheduling
         self.schedule_theory()
         
-        # 6. Post-process: Compact schedules (SOFT constraint)
+        # 7. Bridge Courses - MUST be scheduled as LAST class of the day
+        self.schedule_bridge_courses()
+        
+        # 8. Post-process: Compact schedules (SOFT constraint)
         self.compact_schedules()
         
         # 7. Print scheduling summary

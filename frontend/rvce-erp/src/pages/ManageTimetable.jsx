@@ -279,13 +279,20 @@ export default function ManageTimetable() {
 
   const getFilteredFaculty = () => {
     if (!selectedSubject) {
-      const subjectCodes = subjects.map(s => s.code);
-      return allFaculty.filter(f => {
-        if (f.department !== selectedDept) return false;
-        return (f.subject_codes || []).some(code => subjectCodes.includes(code));
-      });
+      // Show all faculty from the selected department when no subject is selected
+      return allFaculty.filter(f => f.department === selectedDept);
     }
-    return allFaculty.filter(f => (f.subject_codes || []).includes(selectedSubject.code));
+    // Filter faculty who can teach the selected subject
+    const matchedFaculty = allFaculty.filter(f => {
+      const codes = f.subject_codes || [];
+      return codes.includes(selectedSubject.code) || 
+             codes.some(code => selectedSubject.code?.startsWith(code?.trim()));
+    });
+    // If no matches, fall back to department faculty
+    if (matchedFaculty.length === 0) {
+      return allFaculty.filter(f => f.department === selectedDept);
+    }
+    return matchedFaculty;
   };
 
   const getAvailableYears = () => [...new Set(availableSections.map(s => s.academic_year))].sort();
@@ -355,7 +362,11 @@ export default function ManageTimetable() {
     const newTimetable = JSON.parse(JSON.stringify(timetable));
 
     if (dragType === 'subject') {
-      const validation = await validateSlotAssignment(day, slotId, draggedItem, selectedFaculty);
+      // Use draggedItem (the actual dragged subject) instead of selectedSubject
+      const subjectToAssign = draggedItem;
+      const facultyToAssign = selectedFaculty;
+      
+      const validation = await validateSlotAssignment(day, slotId, subjectToAssign, facultyToAssign);
       if (validation.conflicts.filter(c => c.type === 'error').length > 0) {
         setConflicts(validation.conflicts);
         setShowConflicts(true);
@@ -363,19 +374,23 @@ export default function ManageTimetable() {
         setDragType(null);
         return;
       }
-      const isLab = selectedSubject.type === 'Lab' || selectedSubject.lab_hours > 0;
+      
+      // Check if it's a lab subject - use the dragged item's properties
+      const isLab = subjectToAssign.type === 'Lab' || subjectToAssign.type === 'Theory + Lab' || subjectToAssign.lab_hours > 0;
+      
       if (isLab && slotId % 2 === 0) {
-        setConflicts([{ type: 'warning', message: 'Labs must start on odd slots' }]);
+        setConflicts([{ type: 'warning', message: 'Labs must start on odd slots (1, 3, 5)' }]);
         setShowConflicts(true);
         setDraggedItem(null);
         setDragType(null);
         return;
       }
+      
       if (isLab) {
         if (slotId % 2 === 1) {
-          newTimetable[day][slotId] = { subject: draggedItem, faculty: selectedFaculty, room: { name: currentSectionInfo?.dedicated_room || 'Lab' }, is_lab: true };
+          newTimetable[day][slotId] = { subject: subjectToAssign, faculty: facultyToAssign, room: { name: currentSectionInfo?.dedicated_room || 'Lab' }, is_lab: true };
           if (slotId + 1 <= (day === 'SATURDAY' ? 4 : 6)) {
-            newTimetable[day][slotId + 1] = { subject: draggedItem, faculty: selectedFaculty, room: { name: currentSectionInfo?.dedicated_room || 'Lab' }, is_lab: true };
+            newTimetable[day][slotId + 1] = { subject: subjectToAssign, faculty: facultyToAssign, room: { name: currentSectionInfo?.dedicated_room || 'Lab' }, is_lab: true };
           }
         } else {
           setConflicts([{ type: 'warning', message: 'Labs must start on odd slots (1, 3, 5)' }]);
@@ -385,13 +400,18 @@ export default function ManageTimetable() {
           return;
         }
       } else {
-        newTimetable[day][slotId] = { subject: draggedItem, faculty: selectedFaculty, room: { name: currentSectionInfo?.dedicated_room || 'TBD' }, is_lab: false };
+        // Theory subject - just takes 1 slot
+        newTimetable[day][slotId] = { subject: subjectToAssign, faculty: facultyToAssign, room: { name: currentSectionInfo?.dedicated_room || 'TBD' }, is_lab: false };
       }
 
       const newChanges = localChanges.filter(c => !(c.type === 'unassigned' && c.section_id === currentSectionInfo?.id && c.day === day && c.slot === slotId));
       saveLocalChanges(newChanges);
       setTimetable(newTimetable);
       setHasChanges(true);
+      
+      // Auto-select this subject for quick faculty assignment
+      setSelectedSubject(subjectToAssign);
+      
     } else if (dragType === 'faculty') {
       if (newTimetable[day][slotId]) {
         const validation = await validateSlotAssignment(day, slotId, newTimetable[day][slotId].subject, draggedItem);
@@ -559,12 +579,19 @@ export default function ManageTimetable() {
           }
         });
       });
+      
+      console.log(`Saving ${slots.length} slots for section ${currentSectionInfo.id}...`);
+      
       const res = await fetch(`${API_BASE}/manual-edit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ section_id: currentSectionInfo.id, changes: [], timetable: slots })
       });
-      if (res.ok) {
+      
+      const responseData = await res.json();
+      console.log('Save response:', responseData);
+      
+      if (res.ok && responseData.success) {
         setOriginalTimetable(JSON.parse(JSON.stringify(timetable)));
         setHasChanges(false);
 
@@ -572,12 +599,17 @@ export default function ManageTimetable() {
         const newChanges = localChanges.filter(c => c.section_id !== currentSectionInfo.id);
         saveLocalChanges(newChanges);
 
+        // Reload all timetables to reflect changes across faculty/room views
         await loadAllTimetables();
-        setConflicts([{ type: 'success', message: 'Saved successfully!' }]);
+        
+        setConflicts([{ type: 'success', message: `Saved ${slots.length} slots successfully! Changes will appear in all views.` }]);
         setShowConflicts(true);
+      } else {
+        throw new Error(responseData.detail || 'Save failed');
       }
     } catch (err) {
-      setConflicts([{ type: 'error', message: 'Failed to save!' }]);
+      console.error('Save error:', err);
+      setConflicts([{ type: 'error', message: `Failed to save: ${err.message}` }]);
       setShowConflicts(true);
     } finally { setSaving(false); }
   };

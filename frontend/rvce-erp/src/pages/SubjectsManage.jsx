@@ -69,8 +69,12 @@ export default function SubjectsManage() {
 
   // Stats
   const totalSubjects = subjects.length
-  const theoryCount = subjects.filter(s => s.type === 'Theory').length
-  const labCount = subjects.filter(s => s.type === 'Lab' || s.type === 'Theory + Lab').length
+  // Theory only = subjects with only theory hours (no lab hours)
+  const theoryOnlyCount = subjects.filter(s => s.lab_hours === 0 || !s.lab_hours).length
+  // Theory + Lab = subjects that have both theory AND lab hours
+  const theoryPlusLabCount = subjects.filter(s => s.lab_hours > 0 && s.theory_hours > 0).length
+  // Lab only = subjects with only lab hours (no theory hours)  
+  const labOnlyCount = subjects.filter(s => s.lab_hours > 0 && (!s.theory_hours || s.theory_hours === 0)).length
   const basketCount = subjects.filter(s => s.is_basket || s.is_pec || s.is_iec).length
 
   const getTypeColor = (type) => {
@@ -148,8 +152,8 @@ export default function SubjectsManage() {
                   <Beaker className="w-6 h-6 text-emerald-600" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-text-secondary">Lab Courses</p>
-                  <p className="text-2xl font-serif font-bold text-accent-navy">{labCount}</p>
+                  <p className="text-sm font-medium text-text-secondary">Theory + Lab</p>
+                  <p className="text-2xl font-serif font-bold text-accent-navy">{theoryPlusLabCount}</p>
                 </div>
               </div>
             </CardContent>
@@ -162,8 +166,8 @@ export default function SubjectsManage() {
                   <Layers className="w-6 h-6 text-accent-gold" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-text-secondary">Core Subjects</p>
-                  <p className="text-2xl font-serif font-bold text-accent-navy">{theoryCount}</p>
+                  <p className="text-sm font-medium text-text-secondary">Theory Only</p>
+                  <p className="text-2xl font-serif font-bold text-accent-navy">{theoryOnlyCount}</p>
                 </div>
               </div>
             </CardContent>
