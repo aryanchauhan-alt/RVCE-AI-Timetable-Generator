@@ -933,8 +933,8 @@ class TimetableSolverV7:
         return [r['id'] for r in self.rooms if r['department'] == department and r['room_type'] == 'Lab']
     
     def get_physics_labs(self) -> List[str]:
-        """Get shared Physics labs from CH department for first-year students"""
-        return [r['id'] for r in self.rooms if r['department'] == 'CH' and 'Physics-Lab' in r['id']]
+        """Get shared Physics labs from PY (Physics) department for first-year students"""
+        return [r['id'] for r in self.rooms if r['department'] == 'PY' and 'Physics-Lab' in r['id']]
     
     def get_chemistry_labs(self) -> List[str]:
         """Get shared Chemistry labs from CH department for first-year students"""
@@ -1000,7 +1000,7 @@ class TimetableSolverV7:
         1. Yoga/Health → YOGA-Terrace, BT-Quadrangle
         2. IDEA Lab → COMMON IDEA labs
         3. Design Thinking Lab → COMMON Design Thinking labs
-        4. Physics (PY* with physics in name) → Physics-Lab-1/2 in CH department
+        4. Physics (PY* with physics in name) → Physics-Lab-1/2 in PY (Physics) department
         5. Chemistry (CM* with chemistry in name) → Chemistry-Lab-1/2 in CH department
         6. ME subjects for first year → ME labs
         7. Math computational labs (MA* with numerical/computational) → CSE labs (computer labs)
@@ -1113,9 +1113,14 @@ class TimetableSolverV7:
         """Get classrooms for a department - ONLY Classroom type, never Lab"""
         return [r['id'] for r in self.rooms if r['department'] == department and r['room_type'] == 'Classroom']
     
-    def get_any_classroom(self, department: str, day: str, slot: int) -> Optional[str]:
+    def get_placement_rooms(self) -> List[str]:
+        """Get placement rooms from Common department - only for 3rd/4th year students (Sem 5-8)"""
+        return [r['id'] for r in self.rooms if r['department'] == 'Common' and r['room_type'] == 'Placement']
+    
+    def get_any_classroom(self, department: str, day: str, slot: int, semester: int = None) -> Optional[str]:
         """Find any available classroom for theory classes - NEVER use labs.
-        First try department's rooms, then spare rooms, then other departments."""
+        First try department's rooms, then spare rooms, then other departments.
+        For 3rd/4th year students (Sem 5-8), also consider placement rooms."""
         # Priority 1: Department's dedicated classrooms
         dept_rooms = self.get_classrooms(department)
         for room in dept_rooms:
@@ -1134,6 +1139,13 @@ class TimetableSolverV7:
         for room in all_spare:
             if self.is_room_free(room, day, slot):
                 return room
+        
+        # Priority 3.5: Placement rooms for 3rd/4th year students (Sem 5-8)
+        if semester and semester >= 5:
+            placement_rooms = self.get_placement_rooms()
+            for room in placement_rooms:
+                if self.is_room_free(room, day, slot):
+                    return room
         
         # Priority 4: Any classroom from any department (avoid labs)
         all_classrooms = [r['id'] for r in self.rooms if r['room_type'] == 'Classroom']
@@ -1741,8 +1753,16 @@ class TimetableSolverV7:
                 lab_hours = lab.get('weekly_hours', 2)
                 sessions_needed = max(1, lab_hours // 2)
                 
-                # Priority: First year shared labs get higher priority (need more coordination)
-                priority = 1 if sem in [1, 2] else 2
+                # Priority levels (lower = higher priority):
+                # 0: Physics/Chemistry labs (shared limited resource - only 2 labs for ALL depts)
+                # 1: Other first-year shared labs 
+                # 2: Higher year labs (use dept's own labs)
+                if self.is_physics_lab_subject(lab) or self.is_chemistry_lab_subject(lab):
+                    priority = 0  # Highest priority - schedule these FIRST
+                elif sem in [1, 2]:
+                    priority = 1  # First year shared labs
+                else:
+                    priority = 2  # Higher year labs
                 
                 lab_requests.append({
                     'section': section,
@@ -1751,8 +1771,9 @@ class TimetableSolverV7:
                     'priority': priority
                 })
         
-        # Sort by priority (first year labs first) then by section
-        lab_requests.sort(key=lambda x: (x['priority'], x['section']['department'], x['section']['semester'], x['section']['id']))
+        # Sort by priority (physics/chem first, then first year, then by section)
+        # Within same priority, sort by section_id to ensure deterministic scheduling
+        lab_requests.sort(key=lambda x: (x['priority'], x['section']['id']))
         
         # Track lab room utilization for load balancing
         lab_room_usage = defaultdict(int)  # room -> number of sessions
@@ -1992,7 +2013,7 @@ class TimetableSolverV7:
                             room = dedicated_room
                     
                     if not room:
-                        room = self.get_any_classroom(dept, day, slot)
+                        room = self.get_any_classroom(dept, day, slot, section['semester'])
                     
                     if not room:
                         # FALLBACK: Use virtual room if no physical room available
@@ -2013,7 +2034,7 @@ class TimetableSolverV7:
                     slot = self.find_compact_slot(section['id'], day, None)  # No subject constraint
                     if slot is None: continue
                     
-                    room = self.get_any_classroom(dept, day, slot)
+                    room = self.get_any_classroom(dept, day, slot, section['semester'])
                     if not room:
                         room = f"Virtual_{dept}_{section['section']}"
                     
@@ -2028,7 +2049,7 @@ class TimetableSolverV7:
                         if hours_assigned >= hours_needed: break
                         if not self.is_slot_free(section['id'], 'Saturday', sat_slot): continue
                         
-                        room = self.get_any_classroom(dept, 'Saturday', sat_slot)
+                        room = self.get_any_classroom(dept, 'Saturday', sat_slot, section['semester'])
                         if not room:
                             room = f"Virtual_{dept}_{section['section']}"
                         
@@ -2112,7 +2133,7 @@ class TimetableSolverV7:
                     # Find a room
                     room = section.get('dedicated_room')
                     if not room or not self.is_room_free(room, day, last_slot):
-                        room = self.get_any_classroom(dept, day, last_slot)
+                        room = self.get_any_classroom(dept, day, last_slot, section['semester'])
                     if not room:
                         room = f"Virtual_{dept}_{section['section']}"
                     
@@ -2132,7 +2153,7 @@ class TimetableSolverV7:
                     if self.is_slot_free(section['id'], day, last_slot):
                         room = section.get('dedicated_room')
                         if not room or not self.is_room_free(room, day, last_slot):
-                            room = self.get_any_classroom(dept, day, last_slot)
+                            room = self.get_any_classroom(dept, day, last_slot, section['semester'])
                         if not room:
                             room = f"Virtual_{dept}_{section['section']}"
                         
