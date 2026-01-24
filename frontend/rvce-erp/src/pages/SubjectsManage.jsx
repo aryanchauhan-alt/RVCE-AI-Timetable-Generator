@@ -20,8 +20,13 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils.js'
 
+// API base URL - uses environment variable in production
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://rvce-ai-timetable-generator.onrender.com'
 
+/**
+ * SubjectsManage - Manages the course catalog with filtering capabilities
+ * Filters: Department, Semester, Type (Theory/Lab/Theory+Lab)
+ */
 export default function SubjectsManage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedDept, setSelectedDept] = useState('all')
