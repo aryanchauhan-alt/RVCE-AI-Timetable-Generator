@@ -54,10 +54,11 @@ export default function SubjectsManage() {
   }, [])
 
   const filteredSubjects = subjects.filter((s) => {
-    const matchesSearch = s.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    const matchesSearch = !searchQuery || 
+      s.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       s.code?.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesDept = selectedDept === 'all' || s.department === selectedDept
-    const matchesSem = selectedSemester === 'all' || s.semester === parseInt(selectedSemester)
+    const matchesSem = selectedSemester === 'all' || String(s.semester) === selectedSemester
     const matchesType = selectedType === 'all' || s.type === selectedType
     return matchesSearch && matchesDept && matchesSem && matchesType
   })
@@ -253,6 +254,7 @@ export default function SubjectsManage() {
                   <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Subject Details</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Type</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Department</th>
+                  <th className="px-6 py-4 text-center text-xs font-semibold uppercase tracking-wider">Semester</th>
                   <th className="px-6 py-4 text-center text-xs font-semibold uppercase tracking-wider">Credits</th>
                   <th className="px-6 py-4 text-center text-xs font-semibold uppercase tracking-wider">Hours</th>
                 </tr>
@@ -263,7 +265,7 @@ export default function SubjectsManage() {
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-lg bg-accent-navy/10 flex items-center justify-center text-accent-navy font-bold text-xs">
-                          {s.code.substring(0, 2)}
+                          {s.code?.substring(0, 2) || '--'}
                         </div>
                         <div>
                           <p className="font-semibold text-accent-navy">{s.name}</p>
@@ -281,8 +283,13 @@ export default function SubjectsManage() {
                         {s.department || 'ALL'}
                       </Badge>
                     </td>
+                    <td className="p-3 text-center">
+                      <Badge variant="outline" className={getSemesterColor(s.semester)}>
+                        Sem {s.semester || '-'}
+                      </Badge>
+                    </td>
                     <td className="p-3 text-center font-medium">{s.credits}</td>
-                    <td className="p-3 text-center text-text-secondary">{s.credits * 1 + (s.type === 'Lab' ? 2 : 0)}</td>
+                    <td className="p-3 text-center text-text-secondary">{s.theory_hours || 0}T + {s.lab_hours || 0}L</td>
                   </tr>
                 ))}
               </tbody>
