@@ -101,6 +101,16 @@ class TimetableSolverV7:
         # faculty_id -> count of days with 2+ consecutive theory classes
         self.faculty_consecutive_blocks = defaultdict(int)
         
+        # HARD CONSTRAINT: Faculty-Subject-Section locks
+        # Once a faculty is assigned to teach a subject to a section, they ONLY teach that section for that subject
+        # (faculty_id, subject_code) -> section_id
+        self.faculty_subject_section_lock = {}
+        
+        # HARD CONSTRAINT: Section-Subject-Faculty locks  
+        # Once a section has a faculty for a subject, they keep that faculty for ALL classes of that subject
+        # (section_id, subject_code) -> faculty_id
+        self.section_subject_faculty_lock = {}
+        
     async def load_data(self):
         """Load data from Supabase database"""
         print("📥 Loading data from Supabase...")
@@ -391,8 +401,9 @@ class TimetableSolverV7:
         return False
     
     def would_exceed_consecutive_limit(self, faculty_id: str, day: str, slot: int, is_lab: bool = False) -> bool:
-        """SOFT CONSTRAINT: Check if faculty would have 2+ consecutive theory blocks more than once per week.
+        """HARD CONSTRAINT: Check if faculty would have 2+ consecutive theory blocks more than once per week.
         
+        Each teacher can have at most ONE consecutive 2-class session per week (except labs).
         Labs are exempt from this constraint.
         """
         if is_lab or faculty_id.startswith("TBA_"):
@@ -445,13 +456,38 @@ class TimetableSolverV7:
     def get_available_faculty(self, subject: dict, day: str, slot: int, section_id: int = None, is_lab: bool = False) -> Optional[dict]:
         """Get an available faculty for the subject at the given time
         
-        Uses STRICT load balancing to distribute faculty across sections:
-        - ALWAYS prioritizes faculty with fewer assigned hours
-        - Only rotates among faculty with same (minimum) hours
-        - Ensures even distribution across all qualified faculty
-        - HARD CONSTRAINT: Must return actual faculty, not TBA
-        - SOFT CONSTRAINT: Avoid consecutive theory blocks > 1 per week
+        HARD CONSTRAINTS:
+        - Faculty-Subject-Section Lock: Once a faculty teaches a subject to a section, 
+          they ONLY teach that subject to that section (not to other sections)
+        - Section-Subject-Faculty Lock: A section keeps the same faculty for a subject
+          throughout the week
+        - Max 1 consecutive 2-class session per week (except labs)
+        - Max hours per week limit
+        
+        Uses STRICT load balancing to distribute faculty across sections.
         """
+        subject_code = subject.get('course_code', subject.get('name', ''))
+        
+        # HARD CONSTRAINT CHECK 1: Does this section already have a locked faculty for this subject?
+        if section_id is not None:
+            lock_key = (section_id, subject_code)
+            if lock_key in self.section_subject_faculty_lock:
+                locked_faculty_id = self.section_subject_faculty_lock[lock_key]
+                # Find and return this faculty if they're available
+                for f in self.faculty:
+                    if f['id'] == locked_faculty_id:
+                        if self.is_faculty_free(f['id'], day, slot):
+                            return f
+                        else:
+                            # Faculty is locked but not free - return TBA for this slot
+                            # (This shouldn't happen often if we schedule properly)
+                            return {
+                                'id': f"TBA_{subject.get('department', 'DEPT')}",
+                                'name': 'TBA (locked faculty busy)',
+                                'department': subject.get('department', 'DEPT'),
+                                'max_hours': 99
+                            }
+        
         faculty_options = subject.get('faculty_options', [])
         
         # If no faculty options, try to find ANY faculty from the department
@@ -464,13 +500,22 @@ class TimetableSolverV7:
         # Filter to only available faculty
         available = []
         for faculty in faculty_options:
+            # HARD CONSTRAINT CHECK 2: Is this faculty already locked to ANOTHER section for this subject?
+            faculty_lock_key = (faculty['id'], subject_code)
+            if faculty_lock_key in self.faculty_subject_section_lock:
+                locked_section = self.faculty_subject_section_lock[faculty_lock_key]
+                if section_id is not None and locked_section != section_id:
+                    # This faculty is locked to a different section for this subject - SKIP
+                    continue
+            
             if self.is_faculty_free(faculty['id'], day, slot):
                 # Check max hours constraint
                 current_hours = self.get_faculty_hours(faculty['id'])
                 max_hours = faculty.get('max_hours', 18)  # Default to 18, not 40
                 if current_hours < max_hours:
-                    # Check consecutive block constraint (soft - prefer those who won't exceed)
-                    would_exceed = self.would_exceed_consecutive_limit(faculty['id'], day, slot, is_lab)
+                    # HARD CONSTRAINT: Skip faculty who would exceed consecutive limit
+                    if self.would_exceed_consecutive_limit(faculty['id'], day, slot, is_lab):
+                        continue  # Skip this faculty - they already have their 1 allowed consecutive block
                     
                     # Calculate workload percentage for better balancing
                     workload_pct = (current_hours / max_hours) * 100 if max_hours > 0 else 0
@@ -478,8 +523,7 @@ class TimetableSolverV7:
                         'faculty': faculty,
                         'hours': current_hours,
                         'max_hours': max_hours,
-                        'workload_pct': workload_pct,
-                        'would_exceed_consecutive': would_exceed
+                        'workload_pct': workload_pct
                     })
         
         if not available:
@@ -487,35 +531,56 @@ class TimetableSolverV7:
             dept = subject.get('department', '')
             dept_faculty = [f for f in self.faculty if f['department'] == dept]
             for faculty in dept_faculty:
+                # Check faculty-section lock
+                faculty_lock_key = (faculty['id'], subject_code)
+                if faculty_lock_key in self.faculty_subject_section_lock:
+                    locked_section = self.faculty_subject_section_lock[faculty_lock_key]
+                    if section_id is not None and locked_section != section_id:
+                        continue
+                
                 if self.is_faculty_free(faculty['id'], day, slot):
                     current_hours = self.get_faculty_hours(faculty['id'])
                     max_hours = faculty.get('max_hours', 18)
                     if current_hours < max_hours:
+                        # HARD CONSTRAINT: Skip faculty who would exceed consecutive limit
+                        if self.would_exceed_consecutive_limit(faculty['id'], day, slot, is_lab):
+                            continue
                         workload_pct = (current_hours / max_hours) * 100 if max_hours > 0 else 0
                         available.append({
                             'faculty': faculty,
                             'hours': current_hours,
                             'max_hours': max_hours,
-                            'workload_pct': workload_pct,
-                            'would_exceed_consecutive': False
+                            'workload_pct': workload_pct
                         })
         
         if not available:
-            # THIRD ATTEMPT: Find any faculty who is free (cross-department) 
+            # THIRD ATTEMPT: Find any faculty who is free (cross-department)
+            # Look for faculty with LOWEST hours to ensure even distribution
             for faculty in self.faculty:
+                # Check faculty-section lock
+                faculty_lock_key = (faculty['id'], subject_code)
+                if faculty_lock_key in self.faculty_subject_section_lock:
+                    locked_section = self.faculty_subject_section_lock[faculty_lock_key]
+                    if section_id is not None and locked_section != section_id:
+                        continue
+                
                 if self.is_faculty_free(faculty['id'], day, slot):
                     current_hours = self.get_faculty_hours(faculty['id'])
                     max_hours = faculty.get('max_hours', 18)
                     if current_hours < max_hours:
-                        workload_pct = (current_hours / max_hours) * 100 if max_hours > 0 else 0
+                        # HARD CONSTRAINT: Skip faculty who would exceed consecutive limit
+                        if self.would_exceed_consecutive_limit(faculty['id'], day, slot, is_lab):
+                            continue
                         available.append({
                             'faculty': faculty,
                             'hours': current_hours,
                             'max_hours': max_hours,
-                            'workload_pct': workload_pct,
-                            'would_exceed_consecutive': False
+                            'workload_pct': (current_hours / max_hours) * 100 if max_hours > 0 else 0
                         })
-                        break  # Just need one
+            # Only keep faculty with minimum hours from this fallback
+            if available:
+                min_hrs = min(f['hours'] for f in available)
+                available = [f for f in available if f['hours'] == min_hrs]
         
         if not available:
             # FINAL FALLBACK: Return TBA only if absolutely no faculty available
@@ -526,22 +591,17 @@ class TimetableSolverV7:
                 'max_hours': 99
             }
         
-        # Sort by: 1) consecutive limit (prefer not exceeding), 2) workload percentage
-        available.sort(key=lambda x: (x['would_exceed_consecutive'], x['workload_pct'], x['hours']))
+        # Sort by HOURS first (lowest hours = highest priority for assignment)
+        available.sort(key=lambda x: x['hours'])
         
-        # STRICT WORKLOAD BALANCING: Only rotate among faculty with same low workload
+        # STRICT WORKLOAD BALANCING: Only use faculty with MINIMUM hours
         if len(available) > 1:
-            # Prefer faculty who won't exceed consecutive limit
-            non_exceeding = [f for f in available if not f['would_exceed_consecutive']]
-            if non_exceeding:
-                available = non_exceeding
-            
-            min_pct = available[0]['workload_pct']
-            # Get all faculty within 10% of minimum workload
-            balanced_options = [f for f in available if f['workload_pct'] <= min_pct + 10]
+            min_hours = available[0]['hours']
+            # STRICTLY get only faculty with the same minimum hours (no tolerance)
+            balanced_options = [f for f in available if f['hours'] == min_hours]
             
             if len(balanced_options) > 1 and section_id is not None:
-                # Rotate among similarly loaded faculty
+                # Rotate among faculty with same minimum hours
                 idx = section_id % len(balanced_options)
                 return balanced_options[idx]['faculty']
             elif balanced_options:
@@ -554,29 +614,83 @@ class TimetableSolverV7:
         """Get a faculty member who is available for BOTH consecutive slots (for labs).
         
         Prioritizes faculty with:
-        1. Availability in both slots
-        2. Fewer assigned hours (workload balancing)
-        3. Not exceeding max hours after assignment
+        1. Faculty-Subject-Section lock (if already assigned to this section for this subject)
+        2. Availability in both slots
+        3. Fewer assigned hours (workload balancing)
+        4. Not exceeding max hours after assignment
         """
+        subject_code = subject.get('course_code', subject.get('name', ''))
+        
+        # HARD CONSTRAINT: Check if this section already has a locked faculty for this subject
+        section_lock_key = (section_id, subject_code) if section_id else None
+        if section_lock_key and section_lock_key in self.section_subject_faculty_lock:
+            locked_faculty_id = self.section_subject_faculty_lock[section_lock_key]
+            # Find this faculty and check if they're available for both slots
+            for faculty in self.faculty:
+                if faculty['id'] == locked_faculty_id:
+                    if (self.is_faculty_free(faculty['id'], day, slot1) and 
+                        self.is_faculty_free(faculty['id'], day, slot2)):
+                        current_hours = self.get_faculty_hours(faculty['id'])
+                        max_hours = faculty.get('max_hours', 18)
+                        if current_hours + 2 <= max_hours:
+                            # print(f"Using LOCKED faculty {locked_faculty_id} for section {section_id} subject {subject_code} (lab)")
+                            return faculty
+                    # Locked faculty not available - fallback to TBA
+                    # print(f"WARNING: Locked faculty {locked_faculty_id} not available for lab - using TBA")
+                    break
+        
         faculty_options = subject.get('faculty_options', [])
         if not faculty_options:
             return subject.get('faculty')  # Return TBA faculty
         
-        # Filter to only faculty available for BOTH slots
+        # Filter to only faculty available for BOTH slots and not locked to other sections
         available = []
         for faculty in faculty_options:
+            # HARD CONSTRAINT: Check if this faculty is locked to a DIFFERENT section for this subject
+            faculty_lock_key = (faculty['id'], subject_code)
+            if faculty_lock_key in self.faculty_subject_section_lock:
+                locked_section = self.faculty_subject_section_lock[faculty_lock_key]
+                if section_id is not None and locked_section != section_id:
+                    # This faculty is locked to a different section for this subject - SKIP
+                    continue
+            
             # Must be free in both slots
             if not (self.is_faculty_free(faculty['id'], day, slot1) and 
                     self.is_faculty_free(faculty['id'], day, slot2)):
                 continue
                 
-            # Check max hours constraint (needs 2 hours)
+            # Check max hours constraint (needs 2 hours) - default to 18, not 40
             current_hours = self.get_faculty_hours(faculty['id'])
-            if current_hours + 2 <= faculty.get('max_hours', 40):
+            max_hours = faculty.get('max_hours', 18)
+            if current_hours + 2 <= max_hours:
                 available.append({
                     'faculty': faculty,
                     'hours': current_hours
                 })
+        
+        if not available:
+            # SECOND ATTEMPT: Try department faculty who aren't locked to other sections
+            dept = subject.get('department', '')
+            dept_faculty = [f for f in self.faculty if f['department'] == dept]
+            for faculty in dept_faculty:
+                # Check faculty-section lock
+                faculty_lock_key = (faculty['id'], subject_code)
+                if faculty_lock_key in self.faculty_subject_section_lock:
+                    locked_section = self.faculty_subject_section_lock[faculty_lock_key]
+                    if section_id is not None and locked_section != section_id:
+                        continue
+                
+                if not (self.is_faculty_free(faculty['id'], day, slot1) and 
+                        self.is_faculty_free(faculty['id'], day, slot2)):
+                    continue
+                    
+                current_hours = self.get_faculty_hours(faculty['id'])
+                max_hours = faculty.get('max_hours', 18)
+                if current_hours + 2 <= max_hours:
+                    available.append({
+                        'faculty': faculty,
+                        'hours': current_hours
+                    })
         
         if not available:
             # If no faculty is free for both, return TBA as fallback
@@ -590,14 +704,15 @@ class TimetableSolverV7:
         # Sort by hours (ascending) - prefer faculty with fewer hours for better distribution
         available.sort(key=lambda x: x['hours'])
         
+        # STRICT WORKLOAD BALANCING: Only use faculty with MINIMUM hours
+        if len(available) > 1:
+            min_hours = available[0]['hours']
+            available = [f for f in available if f['hours'] == min_hours]
+        
         # If multiple faculty available with same low hours, rotate based on section
         if section_id is not None and len(available) > 1:
-            # Find all with same minimum hours
-            min_hours = available[0]['hours']
-            low_hour_faculty = [f for f in available if f['hours'] == min_hours]
-            if len(low_hour_faculty) > 1:
-                idx = section_id % len(low_hour_faculty)
-                return low_hour_faculty[idx]['faculty']
+            idx = section_id % len(available)
+            return available[idx]['faculty']
         
         return available[0]['faculty']
 
@@ -712,6 +827,22 @@ class TimetableSolverV7:
         # Track section subject-slot patterns for pattern violation detection
         subject_code = subject.get('course_code', subject.get('name', ''))
         self.section_subject_slots[section_id][subject_code].append((day, slot))
+        
+        # HARD CONSTRAINT: Register faculty-subject-section locks
+        # Once a faculty teaches a subject to a section, they can ONLY teach that subject to that section
+        # and that section can ONLY have that faculty for that subject
+        if faculty and not faculty['id'].startswith("TBA_"):
+            lock_key_faculty = (faculty['id'], subject_code)
+            lock_key_section = (section_id, subject_code)
+            
+            # Only register if not already locked
+            if lock_key_faculty not in self.faculty_subject_section_lock:
+                self.faculty_subject_section_lock[lock_key_faculty] = section_id
+                # print(f"LOCK: Faculty {faculty['id']} locked to section {section_id} for subject {subject_code}")
+            
+            if lock_key_section not in self.section_subject_faculty_lock:
+                self.section_subject_faculty_lock[lock_key_section] = faculty['id']
+                # print(f"LOCK: Section {section_id} locked to faculty {faculty['id']} for subject {subject_code}")
     
     def _day_has_consecutive_theory(self, faculty_id: str, day: str) -> bool:
         """Check if faculty has 2+ consecutive theory slots on a day"""
